@@ -1,8 +1,6 @@
-# 在 GitHub Actions 的 macOS 机器上构建 Wenku8 Flutter 的未签名 iOS 包（.ipa）
-# 产物: Wenku8-unsigned.ipa -> 用 Sideloadly / AltStore 以自己的 Apple ID 签名后安装
-#
-# 放置路径: .github/workflows/ios-unsigned-ipa.yml
-# 触发方式: Actions -> Build unsigned iOS IPA -> Run workflow
+# 鍦?GitHub Actions 鐨?macOS 鏈哄櫒涓婃瀯寤?Wenku8 Flutter 鐨勬湭绛惧悕 iOS 鍖咃紙.ipa锛?# 浜х墿: Wenku8-unsigned.ipa -> 鐢?Sideloadly / AltStore 浠ヨ嚜宸辩殑 Apple ID 绛惧悕鍚庡畨瑁?#
+# 鏀剧疆璺緞: .github/workflows/ios-unsigned-ipa.yml
+# 瑙﹀彂鏂瑰紡: Actions -> Build unsigned iOS IPA -> Run workflow
 
 name: Build unsigned iOS IPA
 
@@ -10,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       strip_app_groups:
-        description: "移除 App Groups 权限（免费 Apple ID 无法配置该能力，保持开启）"
+        description: "绉婚櫎 App Groups 鏉冮檺锛堝厤璐?Apple ID 鏃犳硶閰嶇疆璇ヨ兘鍔涳紝淇濇寔寮€鍚級"
         type: boolean
         default: true
 
@@ -19,19 +17,19 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: 源码概况
+      - name: 婧愮爜姒傚喌
         run: |
           echo "repo: $GITHUB_REPOSITORY @ $GITHUB_SHA"
           grep -m1 '^version:' pubspec.yaml
           ls ios
 
-      - name: 移除 App Groups 权限
+      - name: 绉婚櫎 App Groups 鏉冮檺
         if: ${{ inputs.strip_app_groups }}
         run: |
           python3 - <<'PY'
@@ -55,24 +53,22 @@ jobs:
           channel: stable
           cache: true
 
-      - name: 工具链版本
-        run: |
+      - name: 宸ュ叿閾剧増鏈?        run: |
           flutter --version
           xcodebuild -version
           pod --version
 
-      - name: 拉取依赖
+      - name: 鎷夊彇渚濊禆
         run: flutter pub get
 
-      - name: 安装 Pods
+      - name: 瀹夎 Pods
         run: |
           cd ios
           pod install --repo-update
 
-      - name: 构建（不签名）
-        run: flutter build ios --release --no-codesign
+      - name: 鏋勫缓锛堜笉绛惧悕锛?        run: flutter build ios --release --no-codesign
 
-      - name: 打包成 ipa
+      - name: 鎵撳寘鎴?ipa
         run: |
           set -euo pipefail
           cd build/ios/iphoneos
@@ -81,11 +77,11 @@ jobs:
           cp -R Runner.app Payload/
           zip -qry Wenku8-unsigned.ipa Payload
           ls -lh Wenku8-unsigned.ipa
-          echo "--- 主应用 Info.plist ---"
+          echo "--- 涓诲簲鐢?Info.plist ---"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier'        Runner.app/Info.plist || true
           /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Runner.app/Info.plist || true
           /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion'            Runner.app/Info.plist || true
-          echo "--- 内嵌扩展 ---"
+          echo "--- 鍐呭祵鎵╁睍 ---"
           ls Runner.app/PlugIns || true
 
       - uses: actions/upload-artifact@v4
