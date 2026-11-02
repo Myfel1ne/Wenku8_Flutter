@@ -1,0 +1,123 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: ['master']
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      split_per_abi:
+        description: 'Split APKs per ABI'
+        required: false
+        default: 'true'
+        type: boolean
+      release_upload:
+        description: 'Attach APKs to a GitHub Release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.47.9'
+  NDK_VERSION: '28.2.13676358'
+  CMAKE_VERSION: '3.22.1'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android NDK and CMake
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'ndk;${{ env.NDK_VERSION }} cmake;${{ env.CMAKE_VERSION }}'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(sed -n 's/^version: *//p' pubspec.yaml | head -1)
+          echo "name=${version%%+*}" >> "$GITHUB_OUTPUT"
+          echo "code=${version##*+}" >> "$GITHUB_OUTPUT"
+          echo "Building ${version}"
+
+      - name: Restore signing material
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "No signing secrets configured; Gradle will fall back to debug signing."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 --decode > android/wenku-release.jks
+          cat > android/key.properties <<EOF
+          storePassword=$STORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=wenku-release.jks
+          EOF
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build universal APK
+        run: flutter build apk --release
+
+      - name: Build per-ABI APKs
+        if: github.event_name != 'workflow_dispatch' || inputs.split_per_abi
+        run: flutter build apk --release --split-per-abi
+
+      - name: Collect artifacts
+        run: |
+          set -euo pipefail
+          version='${{ steps.version.outputs.name }}'
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk \
+             "dist/Wenku8-${version}-universal-release.apk"
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            src="build/app/outputs/flutter-apk/app-${abi}-release.apk"
+            [ -f "$src" ] && cp "$src" "dist/Wenku8-${version}-${abi}-release.apk"
+          done
+          cd dist && sha256sum ./*.apk > SHA256SUMS.txt && ls -lh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wenku8-apk-${{ steps.version.outputs.name }}-${{ steps.version.outputs.code }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_upload
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('build-{0}', github.run_number) }}
+          name: Wenku8 Flutter ${{ steps.version.outputs.name }}
+          draft: false
+          generate_release_notes: true
+          files: dist/*
