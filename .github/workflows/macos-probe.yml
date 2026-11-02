@@ -1,0 +1,19 @@
+name: macOS runner probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: hello
+        run: |
+          echo "macOS runner is alive"
+          sw_vers
+          xcodebuild -version || true
+          pod --version || true
