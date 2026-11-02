@@ -1,0 +1,96 @@
+# 在 GitHub Actions 的 macOS 机器上构建 Wenku8 Flutter 的未签名 iOS 包（.ipa）
+# 产物: Wenku8-unsigned.ipa -> 用 Sideloadly / AltStore 以自己的 Apple ID 签名后安装
+#
+# 放置路径: .github/workflows/ios-unsigned-ipa.yml
+# 触发方式: Actions -> Build unsigned iOS IPA -> Run workflow
+
+name: Build unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      strip_app_groups:
+        description: "移除 App Groups 权限（免费 Apple ID 无法配置该能力，保持开启）"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 源码概况
+        run: |
+          echo "repo: $GITHUB_REPOSITORY @ $GITHUB_SHA"
+          grep -m1 '^version:' pubspec.yaml
+          ls ios
+
+      - name: 移除 App Groups 权限
+        if: ${{ inputs.strip_app_groups }}
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          empty = (
+              '<?xml version="1.0" encoding="UTF-8"?>\n'
+              '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+              '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+              '<plist version="1.0"><dict/></plist>\n'
+          )
+          for p in ("ios/Runner/ReadingWidgets.entitlements",
+                    "ios/ReadingWidgets/ReadingWidgets.entitlements"):
+              f = pathlib.Path(p)
+              if f.exists():
+                  f.write_text(empty, encoding="utf-8")
+                  print("stripped", p)
+          PY
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: 工具链版本
+        run: |
+          flutter --version
+          xcodebuild -version
+          pod --version
+
+      - name: 拉取依赖
+        run: flutter pub get
+
+      - name: 安装 Pods
+        run: |
+          cd ios
+          pod install --repo-update
+
+      - name: 构建（不签名）
+        run: flutter build ios --release --no-codesign
+
+      - name: 打包成 ipa
+        run: |
+          set -euo pipefail
+          cd build/ios/iphoneos
+          rm -rf Payload Wenku8-unsigned.ipa
+          mkdir Payload
+          cp -R Runner.app Payload/
+          zip -qry Wenku8-unsigned.ipa Payload
+          ls -lh Wenku8-unsigned.ipa
+          echo "--- 主应用 Info.plist ---"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier'        Runner.app/Info.plist || true
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Runner.app/Info.plist || true
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion'            Runner.app/Info.plist || true
+          echo "--- 内嵌扩展 ---"
+          ls Runner.app/PlugIns || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wenku8-ios-unsigned-ipa
+          path: build/ios/iphoneos/Wenku8-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
