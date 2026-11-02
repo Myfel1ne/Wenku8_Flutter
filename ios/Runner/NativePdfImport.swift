@@ -198,7 +198,7 @@ final class PdfImageScanner {
     case "Image":
       if validDimensions(scanner, dictionary: dictionary) { appendImage(scanner) }
     case "Form":
-      let id = UInt(bitPattern: stream.rawValue)
+      let id = UInt(bitPattern: unsafeBitCast(stream, to: UnsafeRawPointer.self))
       guard forms.count < 32, forms.insert(id).inserted else { fail(scanner, "PDF 图形引用循环或嵌套过深"); return }
       let saved = state, savedStack = stack
       defer { state = saved; stack = savedStack; forms.remove(id) }
